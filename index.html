@@ -33,8 +33,8 @@
       const panel=document.querySelector('.briefing-panel');
       if(panel&&!panel.dataset.webAdjusted){
         panel.dataset.webAdjusted='1';
-        panel.querySelector('summary').textContent='모바일 웹 이용 안내';
-        panel.querySelectorAll('details,.briefing-status,.briefing-notice').forEach(el=>el.hidden=true);
+        panel.querySelector('summary').textContent='자동 감시 · 모바일 웹 안내';
+        panel.querySelectorAll('.briefing-settings > details:not(.weather-monitor):not(.app-updates),.briefing-status,.briefing-notice').forEach(el=>el.hidden=true);
         const explanation=document.createElement('p');explanation.textContent='날씨와 음성 브리핑은 현재 화면에서 사용할 수 있습니다. 브라우저를 닫은 뒤 정해진 시간에 실행하는 예약 브리핑은 Android 앱 전용입니다. 음성은 기기 설정과 브라우저에 따라 다를 수 있습니다. 소리가 나지 않으면 시연 팝업의 다시 듣기를 눌러 주세요. 진동을 지원하지 않는 기기도 있습니다.';panel.append(explanation);
       }
     });observer.observe(document.getElementById('root'),{childList:true,subtree:true});
@@ -54,6 +54,8 @@
 
 /* Compact briefing: keep weather visible until settings are requested. */
 .briefing-card{padding:10px 12px;border-radius:14px;margin-bottom:10px}.briefing-heading{justify-content:space-between;gap:8px}.briefing-card h2{font-size:14px;margin:0;line-height:1.4}.briefing-card .briefing-play{display:inline-flex;align-items:center;justify-content:center;width:auto;flex-shrink:0;font-size:12px;margin:0;padding:9px 12px;min-height:40px}.briefing-panel>summary{padding:6px 0 0;color:#617064;font-size:11px}.briefing-panel[open]>summary{padding-bottom:8px}.briefing-settings{border-top:1px solid #e3ece6;padding-top:6px}.briefing-notice:empty{display:none}
+
+.weather-monitor input[type=checkbox]{min-width:24px;width:24px;height:24px;accent-color:#16733f}.weather-monitor .monitor-state{font-weight:700;color:#16733f}
 </style><style>html[data-live-weather="pending"] #root main{visibility:hidden}#web-weather-status{position:fixed;bottom:76px;left:12px;right:12px;z-index:30;background:#fff;border:1px solid #d8e8de;border-radius:10px;padding:9px 12px;color:#17673a;font:12px/1.5 system-ui;box-shadow:0 2px 8px #0001}html[data-live-weather="ready"] #web-weather-status{position:static;border:0;background:#e8f3ec;border-radius:0;padding:5px 12px;font-size:11px}</style></head>
   <body>
     <div id="root"></div>
@@ -134,8 +136,10 @@
       timer = setTimeout(() => speak(text, token), 2150);
     } catch { speak(text, token); }
   }
-  function show(kind) {
-    current = alerts[kind]; previousFocus = document.activeElement;
+  function show(kind,custom) {
+    current = custom || alerts[kind]; previousFocus = document.activeElement;
+    $('.demo-alert > small').textContent=current.label||'시연용 안전 안내';
+    document.getElementById('root').inert=true;
     $('#demo-alert-title').textContent = current.title;
     $('#demo-alert-message').textContent = current.message;
     $('#demo-alert-icon').textContent = current.icon;
@@ -144,7 +148,9 @@
     $('#demo-close').focus();
     play();
   }
-  function closeAlert() { stop(); $('.demo-backdrop').hidden = true; $('.demo-page').inert = false; previousFocus?.focus(); }
+  function closeAlert() { stop(); $('.demo-backdrop').hidden = true; $('.demo-page').inert = false; document.getElementById('root').inert=!$('.demo-page').hidden; previousFocus?.focus();window.dispatchEvent(new Event('weather-risk-dismiss')); }
+  window.addEventListener('weather-risk-alert',event=>{if(event.detail)show(null,event.detail);});
+  window.addEventListener('weather-audio-unlock',async()=>{try{const AudioContext=window.AudioContext||window.webkitAudioContext;context||=new AudioContext();await context.resume();}catch{}});
   window.addEventListener('weather-demo-open', () => {
     document.activeElement?.blur();
     $('.demo-page').hidden = false;
@@ -192,7 +198,7 @@
   window.weatherDaySummaryPeriods = entries => entries.filter(([,v]) => v.PTY != null || v.SKY != null).map(([time,v]) => {
     const pty = Number(v.PTY || 0), sky = Number(v.SKY || 1);
     const condition = [2,6].includes(pty) ? 'SLEET' : [3,7].includes(pty) ? 'SNOW' : pty===4 ? 'SHOWER' : [1,5].includes(pty) ? 'RAIN' : sky===4 ? 'CLOUDY' : sky===3 ? 'PARTLY_CLOUDY' : 'CLEAR';
-    return {time:`${time.slice(0,2)}:${time.slice(2,4)}`,condition,precipitationMm:rainAmount(v.PCP)};
+    return {time:`${time.slice(0,2)}:${time.slice(2,4)}`,condition,temperature:v.TMP==null?null:Number(v.TMP),precipitationMm:rainAmount(v.PCP),snowfallCm:String(v.SNO||'').includes('미만')?0:rainAmount(v.SNO)};
   });
   function periodText(slots) {
     if (!slots.length) return '예보 정보 없음';
@@ -306,6 +312,87 @@
   window.addEventListener('briefing-status-change',()=>{updateNative();refresh();});
   const observer=new MutationObserver(()=>{const mount=document.querySelector('[data-briefing-mount]');if(mount&&!mount.querySelector('.briefing-card'))refresh();});
   observer.observe(document.getElementById('root'),{childList:true,subtree:true});
+  refresh();
+})();
+</script><script>(() => {
+  'use strict';
+  const STORE='weather-safety-monitor-enabled-v1';let weather=null,context=null,lastCheck='',queue=[],checking=false;
+  const native=()=>!!window.WeatherMonitor;
+  const amount=value=>{const s=String(value??'');if(s.includes('미만'))return 0;const m=s.match(/[0-9]+(?:\.[0-9]+)?/);return m?Number(m[0]):0;};
+  const dateKey=ms=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit'}).format(ms);
+  function detect(data,now=Date.now()){
+    if(!data?.sourceName?.startsWith('기상청')&&!data?.monitorFixture)return [];
+    const points=new Map();
+    for(const day of data.dailyForecasts||[]){
+      const date=String(day.forecastDate||'').replace(/\D/g,'');if(date.length!==8)continue;
+      for(const s of day.periodForecasts||[]){
+        if(!/^\d{2}:\d{2}$/.test(s.time||''))continue;
+        const at=Date.parse(`${date.slice(0,4)}-${date.slice(4,6)}-${date.slice(6,8)}T${s.time}:00+09:00`);
+        if(at>=now-3600000&&at<now+86400000)points.set(at,s);
+      }
+    }
+    let heat=false,rain=false,snow=0;
+    for(const s of points.values()){heat||=Number(s.temperature)>=34;rain||=Number(s.precipitationMm)>=30;snow+=Math.max(0,Number(s.snowfallCm)||0);}
+    const result=[];
+    if(heat)result.push({kind:'heat',icon:'☀️',title:'폭염 위험 예보 감지',message:'향후 24시간에 34도 이상 기온이 예상됩니다. 야외 작업은 가급적 피해주시고, 야외작업시에는 충분한 휴식과 물을 자주 마셔 주시기 바랍니다.'});
+    if(rain)result.push({kind:'rain',icon:'🌧️',title:'폭우 위험 예보 감지',message:'향후 24시간에 시간당 30밀리미터 이상의 강한 비가 예상됩니다. 감속 운전과 전방 시야 확보에 유의해 주세요. 침수 도로와 지하차도에는 진입하지 마세요.'});
+    if(snow>=5)result.push({kind:'snow',icon:'❄️',title:'폭설 위험 예보 감지',message:'향후 24시간 예상 신적설 합계가 5센티미터 이상입니다. 스노우 타이어와 체인을 확인하고, 감속 운전과 충분한 안전거리를 확보해 주세요.'});
+    return result;
+  }
+  window.weatherMonitorDetect=detect;
+  function status(){try{return native()?JSON.parse(window.WeatherMonitor.status()):{enabled:localStorage.getItem(STORE)==='1'};}catch{return {enabled:false};}}
+  function refresh(){
+    const mount=document.querySelector('.briefing-card');if(!mount)return;
+    let box=mount.querySelector('.weather-monitor');
+    if(!box){
+      box=document.createElement('details');box.className='weather-monitor';
+      box.innerHTML='<summary>위험 날씨 자동 감시</summary><p class="monitor-scope"></p><label><span>폭염·폭우·폭설 예보 감지</span><input type="checkbox" class="monitor-enabled"></label><p>자체 기준: 향후 24시간 기온 34°C 이상 / 시간당 강수 30mm 이상 / 예상 신적설 합계 5cm 이상. 기상청 공식 특보가 아닙니다.</p><div class="briefing-actions"><button class="monitor-check">지금 예보 확인</button><button class="monitor-stop">음성 중지</button></div><details class="monitor-testing"><summary>가상예보로 자동 감지 확인</summary><p>실제 날씨와 무관한 시험입니다. 예보 수치를 감지기에 전달해 경고음·음성을 확인합니다.</p><div class="briefing-actions"><button data-risk-test="heat">34°C 예보 시험</button><button data-risk-test="snow">신적설 5cm 예보 시험</button><button data-risk-test="rain">시간당 30mm 예보 시험</button></div></details><p class="monitor-state" role="status"></p>';
+      (mount.querySelector('.briefing-settings')||mount).append(box);
+      box.querySelector('.monitor-enabled').onchange=e=>{
+        if(native()){const r=JSON.parse(window.WeatherMonitor.setEnabled(e.target.checked));if(!r.ok){lastCheck=r.message;e.target.checked=false;}}
+        else {localStorage.setItem(STORE,e.target.checked?'1':'0');if(e.target.checked)window.dispatchEvent(new Event('weather-audio-unlock'));}
+        if(status().enabled){check();document.querySelector('button[aria-label="날씨 정보 새로고침"]')?.click();}else queue=[];
+        refresh();
+      };
+      box.querySelector('.monitor-check').onclick=()=>{document.querySelector('button[aria-label="날씨 정보 새로고침"]')?.click();if(native())window.WeatherMonitor.checkNow();check();};
+      box.querySelector('.monitor-stop').onclick=()=>{queue=[];window.dispatchEvent(new Event('weather-audio-stop'));window.WeatherMonitor?.stopPlayback();};
+      box.querySelectorAll('[data-risk-test]').forEach(button=>button.onclick=()=>{
+        const at=Date.now()+3600000,parts=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Seoul',hour:'2-digit',minute:'2-digit',hour12:false}).format(at),kind=button.dataset.riskTest;
+        const fixture={monitorFixture:true,dailyForecasts:[{forecastDate:dateKey(at).replaceAll('-',''),periodForecasts:[{time:parts,temperature:kind==='heat'?34:10,precipitationMm:kind==='rain'?30:0,snowfallCm:kind==='snow'?5:0}]}]};
+        queue=detect(fixture).map(r=>({...r,title:'자동 감지 시험 · '+r.title,label:'가상예보 자동 감지 시험 · 실제 날씨와 무관'}));playNext();
+      });
+    }
+    const state=status();box.querySelector('.monitor-enabled').checked=!!state.enabled;
+    box.querySelector('.monitor-scope').textContent=native()?'선택 지역의 기상청 예보를 앱 밖에서도 약 30분 주기로 확인합니다. 절전·통신 상태에 따라 지연될 수 있습니다. 강제 종료나 전원 꺼짐에는 작동하지 않습니다.':'페이지·앱 화면이 열려 있을 때 약 10분 주기로 최신 예보를 확인합니다. 화면이 닫히면 감시·음성 실행을 보장하지 않습니다. 감시를 켠 뒤 미디어 음량을 확인해 주세요.';
+    box.querySelector('.monitor-state').textContent=(state.enabled?'자동 감시 켜짐 · ':'자동 감시 꺼짐 · ')+(state.message||lastCheck||'같은 지역·위험 종류는 하루 한 번 안내합니다.');
+  }
+  function playNext(){
+    if(!queue.length)return;
+    if(document.querySelector('.demo-backdrop:not([hidden])'))return;
+    const next=queue.shift();window.dispatchEvent(new CustomEvent('weather-risk-alert',{detail:next}));
+  }
+  function check(){
+    if(checking||!status().enabled||!weather)return;
+    checking=true;
+    const risks=detect(weather),region=String(weather.regionId||'')+'-'+String(context?.latitude??'')+'-'+String(context?.longitude??'');
+    for(const risk of risks){
+      let claimed=false;
+      if(native())claimed=window.WeatherMonitor.claim(risk.kind,risk.title,risk.message);
+      else {
+        const key='weather-risk-seen-'+dateKey(Date.now())+'-'+region+'-'+risk.kind;
+        try{claimed=!localStorage.getItem(key);if(claimed)localStorage.setItem(key,'1');}catch{claimed=false;}
+      }
+      if(claimed)queue.push({...risk,label:'기상청 예보 자동 감지 · 앱 자체 기준'});
+    }
+    lastCheck=new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})+' 확인 · '+(risks.length?'감지한 위험 '+risks.length+'종':'설정 기준에 해당하는 위험 예보 없음');
+    checking=false;refresh();playNext();
+  }
+  window.addEventListener('weather-data',e=>{weather=e.detail?.weather;context=e.detail?.region;refresh();check();});
+  window.addEventListener('weather-risk-dismiss',()=>setTimeout(playNext,100));
+  window.addEventListener('briefing-status-change',refresh);
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden&&status().enabled){document.querySelector('button[aria-label="날씨 정보 새로고침"]')?.click();check();}});
+  setInterval(()=>{if(status().enabled&&!document.hidden){document.querySelector('button[aria-label="날씨 정보 새로고침"]')?.click();check();}},600000);
+  new MutationObserver(()=>{const card=document.querySelector('.briefing-card');if(card&&!card.querySelector('.weather-monitor'))refresh();}).observe(document.getElementById('root'),{childList:true,subtree:true});
   refresh();
 })();
 </script><script type="module">(function(){const d=document.createElement("link").relList;if(d&&d.supports&&d.supports("modulepreload"))return;for(const j of document.querySelectorAll('link[rel="modulepreload"]'))o(j);new MutationObserver(j=>{for(const T of j)if(T.type==="childList")for(const O of T.addedNodes)O.tagName==="LINK"&&O.rel==="modulepreload"&&o(O)}).observe(document,{childList:!0,subtree:!0});function y(j){const T={};return j.integrity&&(T.integrity=j.integrity),j.referrerPolicy&&(T.referrerPolicy=j.referrerPolicy),j.crossOrigin==="use-credentials"?T.credentials="include":j.crossOrigin==="anonymous"?T.credentials="omit":T.credentials="same-origin",T}function o(j){if(j.ep)return;j.ep=!0;const T=y(j);fetch(j.href,T)}})();var Tf={exports:{}},qn={};/**

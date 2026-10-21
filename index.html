@@ -36,7 +36,7 @@
         panel.querySelector('summary').textContent='자동 감시 · 모바일 웹 안내';
         panel.querySelectorAll('.briefing-settings > details:not(.weather-monitor):not(.app-updates),.briefing-status,.briefing-notice').forEach(el=>el.hidden=true);
         const explanation=document.createElement('p');explanation.textContent='WEB 시연 버전에서는 화면을 닫은 뒤 예약 브리핑을 실행할 수 없습니다. APP을 다운로드해 설치하면 예약 기능을 사용할 수 있습니다.';panel.append(explanation);
-        const download=document.createElement('aside');download.className='web-app-download';download.innerHTML='<strong>예약 브리핑은 APP에서 이용하세요</strong><p>이 페이지는 WEB 시연 버전이라 예약 기능을 지원하지 않습니다. APP을 다운로드해 설치하면 예약 기능을 사용할 수 있습니다.</p><a href="./weather-safety-v2.12.1.apk" download="weather-safety-v2.12.1.apk">Android APP 다운로드 · v2.12.1</a><small>Android 전용 · 설치 후 알림 및 예약 실행 권한을 허용해 주세요.</small>';panel.closest('.briefing-card').append(download);
+        const download=document.createElement('aside');download.className='web-app-download';download.innerHTML='<strong>예약 브리핑은 APP에서 이용하세요</strong><p>이 페이지는 WEB 시연 버전이라 예약 기능을 지원하지 않습니다. APP을 다운로드해 설치하면 예약 기능을 사용할 수 있습니다.</p><a href="./weather-safety-v2.12.2.apk" download="weather-safety-v2.12.2.apk">Android APP 다운로드 · v2.12.2</a><small>Android 전용 · 설치 후 알림 및 예약 실행 권한을 허용해 주세요.</small>';panel.closest('.briefing-card').append(download);
       }
     });observer.observe(document.getElementById('root'),{childList:true,subtree:true});
   });
@@ -83,6 +83,7 @@
     oscillators = [];
     if (gain) { gain.disconnect(); gain = null; }
     window.speechSynthesis?.cancel();
+    try { window.NativeVoice?.stop(); } catch {}
     try { window.Android?.stopSpeaking?.(); } catch {}
   }
   window.addEventListener("weather-audio-stop", stop);
@@ -90,7 +91,10 @@
     if (token !== generation) return;
     $('#demo-audio-status').textContent = '음성 안내 중';
     try {
-      if (window.Android?.speak) {
+      if (window.weatherSpeak) {
+        window.weatherSpeak(text);
+        $('#demo-audio-status').textContent = '음성 안내를 시작합니다. 브리핑 카드에서 재생 상태를 확인할 수 있습니다.';
+      } else if (window.Android?.speak) {
         window.Android.speak(text);
         $('#demo-audio-status').textContent = '기기의 음성 안내로 전달했습니다.';
       } else if ('speechSynthesis' in window) {
@@ -237,33 +241,47 @@
     return {date,morning,afternoon,forecast,safety:safety.join(' ')};
   }
   window.weatherSummarizeDay = summarize;
-  let token=0;
-  function stop(){token++;window.speechSynthesis?.cancel();try{window.Android?.stopSpeaking?.();window.Briefing?.stopPlayback?.();}catch{}}
+  let generation=0, utterance=null, watchdog=null, pendingText='';
+  const synth=window.speechSynthesis;
+  function report(message){
+    let box=document.querySelector('.weather-voice-state');
+    if(!box){const card=document.querySelector('.briefing-card');if(!card)return;
+      box=document.createElement('div');box.className='weather-voice-state';box.setAttribute('role','status');
+      box.style.cssText='font-size:12px;line-height:1.6;padding:8px 12px;color:#174c32';card.append(box);}
+    box.replaceChildren(document.createTextNode(message));
+    if(message.includes('못했')||message.includes('지원하지')||message.includes('시작되지')){
+      const retry=document.createElement('button');retry.textContent='음성 다시 듣기';retry.style.cssText='margin:4px 8px;padding:6px 10px;border:1px solid #176b3b;border-radius:8px';retry.onclick=()=>speak(pendingText);box.append(retry);
+      const help=document.createElement('div');help.textContent='네이버·카카오톡 안에서 열었다면 크롬·삼성 인터넷 또는 사파리로 열어주세요. 휴대폰 미디어 음량과 한국어 음성 설치도 확인해 주세요.';box.append(help);
+    }
+  }
+  function stop(){generation++;clearTimeout(watchdog);utterance=null;try{synth?.cancel();window.NativeVoice?.stop();window.Android?.stopSpeaking?.();window.Briefing?.stopPlayback?.();}catch{}}
   window.addEventListener('weather-audio-stop',stop);
-  window.addEventListener('weather-briefing-speak',event=>{
-    const text=event.detail?.text;if(typeof text!=='string'||!text)return;
-    window.dispatchEvent(new Event('weather-audio-stop'));
-    try {
-      if(window.Android?.speak)window.Android.speak(text);
-      else if('speechSynthesis' in window){const u=new SpeechSynthesisUtterance(text);u.lang='ko-KR';u.rate=.95;window.speechSynthesis.speak(u);}
-    }catch{}
-  });
-  window.addEventListener('weather-day-open',event=>{
-    if(!event.detail?.day)return;
-    window.dispatchEvent(new Event('weather-audio-stop'));
-    const current=summarize(event.detail.day);
-    const text=`${current.date}의 날씨를 안내합니다. ${current.forecast} ${current.safety}`;
-    try {
-      if(window.Android?.speak){window.Android.speak(text);}
-      else if('speechSynthesis' in window){
-        const utterance=new SpeechSynthesisUtterance(text);
-        utterance.lang='ko-KR';utterance.rate=.95;
-        const voice=window.speechSynthesis.getVoices().find(v=>v.lang.startsWith('ko'));
-        if(voice)utterance.voice=voice;
-        window.speechSynthesis.speak(utterance);
-      }
-    }catch{}
-  });
+  window.addEventListener('weather-native-voice-status',e=>report(e.detail?.message||''));
+  function speak(text){
+    if(typeof text!=='string'||!text.trim())return;
+    window.dispatchEvent(new Event('weather-audio-stop'));pendingText=text;
+    const id=generation;
+    if(window.NativeVoice?.speak){window.NativeVoice.speak(text);report('한국어 음성을 준비하고 있습니다.');return;}
+    if(window.Android?.speak){try{window.Android.speak(text);report('기기의 음성으로 안내합니다.');return;}catch{}}
+    if(!synth||!window.SpeechSynthesisUtterance){report('이 브라우저는 음성 읽기를 지원하지 않습니다.');return;}
+    const chunks=text.match(/[^.!?。！？]+[.!?。！？]?/g)||[text];let index=0,started=false;
+    function next(){
+      if(id!==generation)return;
+      if(index>=chunks.length){utterance=null;report('음성 안내가 끝났습니다.');return;}
+      utterance=new SpeechSynthesisUtterance(chunks[index++]);utterance.lang='ko-KR';utterance.rate=.95;
+      const voice=synth.getVoices().find(v=>/^ko([-_]|$)/i.test(v.lang));if(voice)utterance.voice=voice;
+      utterance.onstart=()=>{if(id!==generation)return;started=true;clearTimeout(watchdog);report('음성 안내 중 · 미디어 음량을 조절해 주세요.');};
+      utterance.onend=()=>{if(id===generation)next();};
+      utterance.onerror=e=>{if(id!==generation||['interrupted','canceled'].includes(e.error))return;clearTimeout(watchdog);report('음성을 재생하지 못했습니다. ('+(e.error||'재생 오류')+')');};
+      try{synth.speak(utterance);if(synth.paused)synth.resume();}catch{report('음성을 재생하지 못했습니다.');}
+    }
+    report('음성 재생을 시작합니다.');next();
+    watchdog=setTimeout(()=>{if(id===generation&&!started)report('휴대폰에서 음성 재생이 시작되지 않았습니다. 다시 듣기를 눌러주세요.');},6000);
+  }
+  window.weatherSpeak=speak;
+  try{synth?.getVoices();synth?.addEventListener('voiceschanged',()=>synth.getVoices());}catch{}
+  window.addEventListener('weather-briefing-speak',e=>speak(e.detail?.text));
+  window.addEventListener('weather-day-open',e=>{if(!e.detail?.day)return;const day=summarize(e.detail.day);speak(`${day.date}의 날씨를 안내합니다. ${day.forecast} ${day.safety}`);});
   document.addEventListener('visibilitychange',()=>{if(document.hidden)stop();});
 })();
 </script><script>(() => {
@@ -289,7 +307,7 @@
         if(heat)preparation+='출발 전 식수를 준비해 주세요. ';
         const text=`오늘의 외근 브리핑입니다. ${summary.date}, ${latest.detailAddress||latest.regionName||''} 날씨입니다. ${summary.forecast} ${summary.safety} ${preparation}방문 시간보다 안전이 우선입니다.`;
         window.dispatchEvent(new CustomEvent('weather-briefing-speak',{detail:{text}}));
-        notice='오늘의 외근 브리핑을 음성으로 안내합니다.';refresh();
+        notice='';refresh();
       };
       mount.querySelector('.briefing-permissions').onclick=()=>{if(native())window.Briefing.requestPermissions();else{notice='예약은 안드로이드 앱에서 사용할 수 있습니다.';refresh();}};
       mount.querySelector('.briefing-save').onclick=()=>{
@@ -352,7 +370,7 @@
       box.innerHTML='<summary>위험 날씨 자동 감시</summary><p class="monitor-scope"></p><label><span>폭염·폭우·폭설 예보 감지</span><input type="checkbox" class="monitor-enabled"></label><p>자체 기준: 앞으로 1시간 이내 기온 34°C 이상 / 시간당 강수 30mm 이상 / 예상 신적설 5cm 이상. 기상청 공식 특보가 아닙니다.</p><div class="briefing-actions"><button class="monitor-check">지금 예보 확인</button><button class="monitor-stop">음성 중지</button></div><details class="monitor-testing"><summary>가상예보로 자동 감지 확인</summary><p>실제 날씨와 무관한 시험입니다. 예보 수치를 감지기에 전달해 경고음·음성을 확인합니다.</p><div class="briefing-actions"><button data-risk-test="heat">34°C 예보 시험</button><button data-risk-test="snow">신적설 5cm 예보 시험</button><button data-risk-test="rain">시간당 30mm 예보 시험</button></div></details><p class="monitor-state" role="status"></p>';
       (mount.querySelector('.briefing-settings')||mount).append(box);
       box.querySelector('.monitor-enabled').onchange=e=>{
-        if(native()){const r=JSON.parse(window.WeatherMonitor.setEnabled(e.target.checked));if(!r.ok){lastCheck=r.message;e.target.checked=false;}}
+        if(native()){const r=JSON.parse(window.WeatherMonitor.setEnabled(e.target.checked));if(!r.ok){lastCheck=r.message;e.target.checked=false;if(r.message.includes('권한'))window.WeatherMonitor.requestPermissions?.();}}
         else {localStorage.setItem(STORE,e.target.checked?'1':'0');if(e.target.checked)window.dispatchEvent(new Event('weather-audio-unlock'));}
         if(status().enabled){check();document.querySelector('button[aria-label="날씨 정보 새로고침"]')?.click();}else queue=[];
         refresh();
@@ -365,7 +383,11 @@
         queue=detect(fixture).map(r=>({...r,title:'자동 감지 시험 · '+r.title,label:'가상예보 자동 감지 시험 · 실제 날씨와 무관'}));playNext();
       });
     }
-    const state=status();box.querySelector('.monitor-enabled').checked=!!state.enabled;
+    let quick=mount.querySelector('.monitor-quick');
+    if(!quick){quick=document.createElement('button');quick.className='monitor-quick';quick.type='button';quick.style.cssText='margin:6px 12px;padding:7px 10px;border:1px solid #b6d8c0;border-radius:9px;background:#edf8ef;color:#175b34;font-size:12px';mount.querySelector('.briefing-heading').after(quick);
+      quick.onclick=()=>{box.open=true;const panel=box.closest('.briefing-panel');if(panel)panel.open=true;
+        const toggle=box.querySelector('.monitor-enabled');if(!status().enabled){toggle.checked=true;toggle.onchange({target:toggle});}else box.scrollIntoView({block:'nearest'});};}
+    const state=status();quick.textContent=state.enabled?'● 위험 날씨 자동 감시 켜짐 · 설정':'○ 위험 날씨 자동 감시 켜기';box.querySelector('.monitor-enabled').checked=!!state.enabled;
     box.querySelector('.monitor-scope').textContent=native()?'선택 지역의 기상청 예보를 앱 밖에서도 약 30분 주기로 확인합니다. 절전·통신 상태에 따라 지연될 수 있습니다. 강제 종료나 전원 꺼짐에는 작동하지 않습니다.':'페이지·앱 화면이 열려 있을 때 약 10분 주기로 최신 예보를 확인합니다. 화면이 닫히면 감시·음성 실행을 보장하지 않습니다. 감시를 켠 뒤 미디어 음량을 확인해 주세요.';
     box.querySelector('.monitor-state').textContent=(state.enabled?'자동 감시 켜짐 · ':'자동 감시 꺼짐 · ')+(state.message||lastCheck||'같은 지역·위험 종류는 하루 한 번 안내합니다.');
   }

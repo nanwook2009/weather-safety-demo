@@ -36,7 +36,7 @@
         panel.querySelector('summary').textContent='자동 감시 · 모바일 웹 안내';
         panel.querySelectorAll('.briefing-settings > details:not(.weather-monitor):not(.app-updates),.briefing-status,.briefing-notice').forEach(el=>el.hidden=true);
         const explanation=document.createElement('p');explanation.textContent='WEB 시연 버전에서는 화면을 닫은 뒤 예약 브리핑을 실행할 수 없습니다. APP을 다운로드해 설치하면 예약 기능을 사용할 수 있습니다.';panel.append(explanation);
-        const download=document.createElement('aside');download.className='web-app-download';download.innerHTML='<strong>예약 브리핑은 APP에서 이용하세요</strong><p>이 페이지는 WEB 시연 버전이라 예약 기능을 지원하지 않습니다. APP을 다운로드해 설치하면 예약 기능을 사용할 수 있습니다.</p><a href="./weather-safety-v2.12.4.apk" download="weather-safety-v2.12.4.apk">Android APP 다운로드 · v2.12.4</a><small>Android 전용 · 설치 후 알림 및 예약 실행 권한을 허용해 주세요.</small>';panel.closest('.briefing-card').append(download);
+        const download=document.createElement('aside');download.className='web-app-download';download.innerHTML='<strong>예약 브리핑은 APP에서 이용하세요</strong><p>이 페이지는 WEB 시연 버전이라 예약 기능을 지원하지 않습니다. APP을 다운로드해 설치하면 예약 기능을 사용할 수 있습니다.</p><a href="./weather-safety-v2.12.5.apk" download="weather-safety-v2.12.5.apk">Android APP 다운로드 · v2.12.5</a><small>Android 전용 · 설치 후 알림 및 예약 실행 권한을 허용해 주세요.</small>';panel.closest('.briefing-card').append(download);
       }
     });observer.observe(document.getElementById('root'),{childList:true,subtree:true});
   });
@@ -77,6 +77,7 @@
   let context, oscillators = [], gain, timer, generation = 0, current, previousFocus;
   function stop() {
     generation++;
+    try { window.NativeAudio?.stop(); } catch {}
     clearTimeout(timer);
     try { navigator.vibrate?.(0); } catch {}
     oscillators.forEach(oscillator => { try { oscillator.stop(); } catch {} oscillator.disconnect(); });
@@ -119,6 +120,7 @@
       context ||= new AudioContext();
       await context.resume();
       if (token !== generation) return;
+      window.NativeAudio?.begin();
       gain = context.createGain();
       const now = context.currentTime;
       // A synthesized emergency-style dual tone; not an official alert recording.
@@ -139,7 +141,7 @@
       }
       gain.connect(context.destination);
       oscillators.forEach(oscillator => { oscillator.start(now); oscillator.stop(now + 2); });
-      try { navigator.vibrate?.([510, 170, 510, 170, 510]); } catch {}
+      try { if(!window.NativeAudio)navigator.vibrate?.([510, 170, 510, 170, 510]); } catch {}
       timer = setTimeout(() => speak(text, token), 2150);
     } catch { speak(text, token); }
   }
@@ -378,10 +380,10 @@
     let box=mount.querySelector('.weather-monitor');
     if(!box){
       box=document.createElement('details');box.className='weather-monitor';
-      box.innerHTML='<summary>위험 날씨 자동 감시</summary><p class="monitor-scope"></p><label><span>폭염·폭우·폭설 예보 감지</span><input type="checkbox" class="monitor-enabled"></label><p>자체 기준: 앞으로 1시간 이내 기온 34°C 이상 / 시간당 강수 30mm 이상 / 예상 신적설 5cm 이상. 기상청 공식 특보가 아닙니다.</p><div class="briefing-actions"><button class="monitor-check">지금 예보 확인</button><button class="monitor-stop">음성 중지</button></div><details class="monitor-testing"><summary>가상예보로 자동 감지 확인</summary><p>실제 날씨와 무관한 시험입니다. 예보 수치를 감지기에 전달해 경고음·음성을 확인합니다.</p><div class="briefing-actions"><button data-risk-test="heat">34°C 예보 시험</button><button data-risk-test="snow">신적설 5cm 예보 시험</button><button data-risk-test="rain">시간당 30mm 예보 시험</button></div></details><p class="monitor-state" role="status"></p>';
+      box.innerHTML='<summary>위험 날씨 자동 감시</summary><p class="monitor-scope"></p><label><span>폭염·폭우·폭설 예보 감지</span><input type="checkbox" class="monitor-enabled"></label><p>자체 기준: 앞으로 1시간 이내 기온 34°C 이상 / 시간당 강수 30mm 이상 / 예상 신적설 5cm 이상. 기상청 공식 특보가 아닙니다.</p><div class="briefing-actions"><button class="monitor-check">지금 예보 확인</button><button class="monitor-stop">음성 중지</button></div><details class="monitor-testing"><summary>가상예보로 자동 감지 확인</summary><p>실제 날씨와 무관한 시험입니다. 예보 수치를 감지기에 전달해 경고음·음성을 확인합니다.</p><div class="briefing-actions"><button data-risk-test="heat">34°C 예보 시험</button><button data-risk-test="snow">신적설 5cm 예보 시험</button><button data-risk-test="rain">시간당 30mm 예보 시험</button></div></details><p class="monitor-state" role="status"></p><p class="monitor-upgrade" hidden>감시 등록 오류는 앱 자체 업데이트로 수정됩니다. <a href="https://nanwook2009.github.io/weather-safety-demo/weather-safety-v2.12.5.apk">감시 오류 수정 앱 설치</a></p>';
       (mount.querySelector('.briefing-settings')||mount).append(box);
       box.querySelector('.monitor-enabled').onchange=e=>{
-        if(native()){const r=JSON.parse(window.WeatherMonitor.setEnabled(e.target.checked));if(!r.ok){lastCheck=r.message;e.target.checked=false;if(r.message.includes('권한'))window.WeatherMonitor.requestPermissions?.();}}
+        if(native()){const r=JSON.parse(window.WeatherMonitor.setEnabled(e.target.checked));if(!r.ok){lastCheck=r.message;e.target.checked=false;box.querySelector('.monitor-upgrade').hidden=!/등록|차단|누락/.test(r.message);if(r.message.includes('권한'))window.WeatherMonitor.requestPermissions?.();}}
         else {localStorage.setItem(STORE,e.target.checked?'1':'0');if(e.target.checked)window.dispatchEvent(new Event('weather-audio-unlock'));}
         if(status().enabled){check();document.querySelector('button[aria-label="날씨 정보 새로고침"]')?.click();}else queue=[];
         refresh();
@@ -400,7 +402,7 @@
         const toggle=box.querySelector('.monitor-enabled');if(!status().enabled){toggle.checked=true;toggle.onchange({target:toggle});}else box.scrollIntoView({block:'nearest'});};}
     const state=status();quick.textContent=state.enabled?'● 위험 날씨 자동 감시 켜짐 · 설정':'○ 위험 날씨 자동 감시 켜기';box.querySelector('.monitor-enabled').checked=!!state.enabled;
     box.querySelector('.monitor-scope').textContent=native()?'선택 지역의 기상청 예보를 앱 밖에서도 약 30분 주기로 확인합니다. 절전·통신 상태에 따라 지연될 수 있습니다. 강제 종료나 전원 꺼짐에는 작동하지 않습니다.':'페이지·앱 화면이 열려 있을 때 약 10분 주기로 최신 예보를 확인합니다. 화면이 닫히면 감시·음성 실행을 보장하지 않습니다. 감시를 켠 뒤 미디어 음량을 확인해 주세요.';
-    box.querySelector('.monitor-state').textContent=(state.enabled?'자동 감시 켜짐 · ':'자동 감시 꺼짐 · ')+(state.message||lastCheck||'같은 지역·위험 종류는 하루 한 번 안내합니다.');
+    box.querySelector('.monitor-state').textContent=(state.enabled?'자동 감시 켜짐 · ':'자동 감시 꺼짐 · ')+(lastCheck||state.message||'같은 지역·위험 종류는 하루 한 번 안내합니다.');
   }
   function playNext(){
     if(!queue.length)return;

@@ -36,7 +36,7 @@
         panel.querySelector('summary').textContent='자동 감시 · 모바일 웹 안내';
         panel.querySelectorAll('.briefing-settings > details:not(.weather-monitor):not(.app-updates),.briefing-status,.briefing-notice').forEach(el=>el.hidden=true);
         const explanation=document.createElement('p');explanation.textContent='WEB 시연 버전에서는 화면을 닫은 뒤 예약 브리핑을 실행할 수 없습니다. APP을 다운로드해 설치하면 예약 기능을 사용할 수 있습니다.';panel.append(explanation);
-        const download=document.createElement('aside');download.className='web-app-download';download.innerHTML='<strong>예약 브리핑은 APP에서 이용하세요</strong><p>이 페이지는 WEB 시연 버전이라 예약 기능을 지원하지 않습니다. APP을 다운로드해 설치하면 예약 기능을 사용할 수 있습니다.</p><a href="./weather-safety-v2.12.2.apk" download="weather-safety-v2.12.2.apk">Android APP 다운로드 · v2.12.2</a><small>Android 전용 · 설치 후 알림 및 예약 실행 권한을 허용해 주세요.</small>';panel.closest('.briefing-card').append(download);
+        const download=document.createElement('aside');download.className='web-app-download';download.innerHTML='<strong>예약 브리핑은 APP에서 이용하세요</strong><p>이 페이지는 WEB 시연 버전이라 예약 기능을 지원하지 않습니다. APP을 다운로드해 설치하면 예약 기능을 사용할 수 있습니다.</p><a href="./weather-safety-v2.12.3.apk" download="weather-safety-v2.12.3.apk">Android APP 다운로드 · v2.12.3</a><small>Android 전용 · 설치 후 알림 및 예약 실행 권한을 허용해 주세요.</small>';panel.closest('.briefing-card').append(download);
       }
     });observer.observe(document.getElementById('root'),{childList:true,subtree:true});
   });
@@ -192,6 +192,37 @@
 })();
 </script><script>(() => {
   'use strict';
+  const KEY='weather-voice-options-v1';
+  let options={voice:'',rate:.92};try{Object.assign(options,JSON.parse(localStorage.getItem(KEY)||'{}'));}catch{}
+  const korean=v=>/^ko([-_]|$)/i.test(v.lang||'');
+  function score(v){const name=String(v.name||'');return (/sunhi|heami|yuna|sora|유나|여성|female/i.test(name)?1000:0)+(/natural|neural|premium|enhanced|고품질/i.test(name)?100:0)+(v.default?5:0);}
+  function choose(voices){const list=voices.filter(korean);return list.find(v=>(v.voiceURI||v.name)===options.voice)||list.sort((a,b)=>score(b)-score(a))[0];}
+  function normalize(text){return String(text).replace(/오전·오후/g,'오전과 오후').replace(/(\d+(?:\.\d+)?)\s*[℃°](?:C)?/g,'$1도').replace(/(\d+(?:\.\d+)?)\s*mm\b/gi,'$1밀리미터').replace(/(\d+(?:\.\d+)?)\s*cm\b/gi,'$1센티미터');}
+  function split(text){return normalize(text).split(/(?<=[.!?。！？])\s+/).map(t=>t.trim()).filter(Boolean);}
+  function state(){if(window.NativeVoice?.options)try{return JSON.parse(window.NativeVoice.options());}catch{}return {...options,voices:(window.speechSynthesis?.getVoices()||[]).filter(korean).map(v=>({id:v.voiceURI||v.name,name:v.name}))};}
+  function refresh(){
+    const card=document.querySelector('.briefing-card');if(!card)return;
+    let panel=card.querySelector('.voice-options');
+    if(!panel){panel=document.createElement('details');panel.className='voice-options';panel.style.cssText='margin:4px 12px 8px;font-size:12px;line-height:1.7;color:#174c32';
+      panel.innerHTML='<summary>음성 설정 · 차분한 브리핑</summary><p>기기의 한국어 음성을 사용합니다. 여성 음성으로 식별되는 항목을 우선 선택하며, 지원 음성은 휴대폰마다 다릅니다.</p><label>목소리 <select class="voice-choice" aria-label="브리핑 목소리"></select></label> <label>읽기 속도 <select class="voice-rate" aria-label="브리핑 읽기 속도"><option value="0.86">여유롭게</option><option value="0.92">차분하게 · 기본</option><option value="1">보통</option></select></label><div><button type="button" class="voice-preview">목소리 미리 듣기</button></div><p>예약 브리핑과 위험 알림에도 적용됩니다. 웹 음성 설정은 현재 브라우저에 저장됩니다.</p>';
+      panel.querySelectorAll('select,button').forEach(el=>el.style.cssText='border:1px solid #b6d8c0;border-radius:7px;background:white;color:#174c32;padding:6px;margin:4px 0');
+      panel.addEventListener('toggle',()=>{if(panel.open){window.NativeVoice?.prepare?.();refresh();}});
+      const save=()=>{options={voice:panel.querySelector('.voice-choice').value,rate:Number(panel.querySelector('.voice-rate').value)};try{localStorage.setItem(KEY,JSON.stringify(options));}catch{}window.NativeVoice?.configure?.(options.voice,options.rate);};
+      panel.querySelector('.voice-choice').onchange=save;panel.querySelector('.voice-rate').onchange=save;
+      panel.querySelector('.voice-preview').onclick=()=>window.weatherSpeak?.('안녕하세요. 오늘의 외근 안전 브리핑입니다. 출발 전, 날씨와 안전수칙을 함께 확인해 주세요. 오늘도 안전한 하루 보내시기 바랍니다.');
+      card.append(panel);
+    }
+    const current=state(),select=panel.querySelector('.voice-choice');select.replaceChildren();
+    const add=(value,label)=>{const option=document.createElement('option');option.value=value;option.textContent=label;select.append(option);};
+    add('','자동 선택 · 여성·고품질 우선');for(const v of current.voices||[])add(v.id,v.name);
+    select.value=current.voice||'';panel.querySelector('.voice-rate').value=String(current.rate||.92);
+  }
+  window.weatherVoiceProfile={choose,normalize,split,rate:()=>Number(options.rate)||.92};
+  window.addEventListener('weather-data',refresh);window.addEventListener('weather-native-voices',refresh);
+  window.speechSynthesis?.addEventListener('voiceschanged',refresh);
+})();
+</script><script>(() => {
+  'use strict';
   const names = {CLEAR:'맑음', PARTLY_CLOUDY:'구름 많음', CLOUDY:'흐림', RAIN:'비', SHOWER:'소나기', SNOW:'눈', SLEET:'비 또는 눈', THUNDER:'뇌우', WIND:'강풍', FOG:'안개'};
   const rank = ['CLEAR','PARTLY_CLOUDY','CLOUDY','FOG','WIND','SHOWER','RAIN','THUNDER','SLEET','SNOW'];
   function rainAmount(value) {
@@ -264,14 +295,14 @@
     if(window.NativeVoice?.speak){window.NativeVoice.speak(text);report('한국어 음성을 준비하고 있습니다.');return;}
     if(window.Android?.speak){try{window.Android.speak(text);report('기기의 음성으로 안내합니다.');return;}catch{}}
     if(!synth||!window.SpeechSynthesisUtterance){report('이 브라우저는 음성 읽기를 지원하지 않습니다.');return;}
-    const chunks=text.match(/[^.!?。！？]+[.!?。！？]?/g)||[text];let index=0,started=false;
+    const chunks=window.weatherVoiceProfile?.split(text)||text.split(/(?<=[.!?。！？])\s+/);let index=0,started=false;
     function next(){
       if(id!==generation)return;
       if(index>=chunks.length){utterance=null;report('음성 안내가 끝났습니다.');return;}
-      utterance=new SpeechSynthesisUtterance(chunks[index++]);utterance.lang='ko-KR';utterance.rate=.95;
-      const voice=synth.getVoices().find(v=>/^ko([-_]|$)/i.test(v.lang));if(voice)utterance.voice=voice;
+      utterance=new SpeechSynthesisUtterance(chunks[index++]);utterance.lang='ko-KR';utterance.rate=window.weatherVoiceProfile?.rate()||.92;utterance.pitch=1;
+      const voice=window.weatherVoiceProfile?.choose(synth.getVoices())||synth.getVoices().find(v=>/^ko([-_]|$)/i.test(v.lang));if(voice)utterance.voice=voice;
       utterance.onstart=()=>{if(id!==generation)return;started=true;clearTimeout(watchdog);report('음성 안내 중 · 미디어 음량을 조절해 주세요.');};
-      utterance.onend=()=>{if(id===generation)next();};
+      utterance.onend=()=>{if(id===generation)watchdog=setTimeout(next,180);};
       utterance.onerror=e=>{if(id!==generation||['interrupted','canceled'].includes(e.error))return;clearTimeout(watchdog);report('음성을 재생하지 못했습니다. ('+(e.error||'재생 오류')+')');};
       try{synth.speak(utterance);if(synth.paused)synth.resume();}catch{report('음성을 재생하지 못했습니다.');}
     }
